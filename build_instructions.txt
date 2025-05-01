@@ -1,0 +1,103 @@
+# Building the PolyphonicPitchShifter AudioUnit Plugin
+
+## Online Build Options
+
+Since you mentioned storage limitations, here are some online build options that should work well:
+
+### Option 1: GitHub Codespaces (Recommended)
+
+1. Create a GitHub account if you don't have one
+2. Create a new repository and upload these files
+3. Click the "Code" button and select "Open with Codespaces"
+4. In the terminal, run:
+
+```bash
+# Install dependencies (RubberBand library)
+brew install rubberband
+
+# Compile the AudioUnit
+mkdir -p build
+cd build
+cmake ..
+make
+```
+
+### Option 2: Replit
+
+1. Create a Replit account
+2. Create a new C++ project
+3. Upload the source files
+4. In the shell, install RubberBand:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y librubberband-dev
+```
+
+5. Create a simple makefile and build
+
+### Option 3: GitPod
+
+GitPod offers free CPU hours each month and has good C++ support.
+
+## Building with CMake (Local or Online)
+
+Create a CMakeLists.txt file with the following content:
+
+```cmake
+cmake_minimum_required(VERSION 3.10)
+project(PolyphonicPitchShifter)
+
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")
+
+# Find RubberBand library
+find_library(RUBBERBAND_LIB rubberband REQUIRED)
+include_directories(/usr/local/include)
+
+# Core Audio frameworks
+find_library(COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
+find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+
+# Source files
+set(SOURCE_FILES
+    PolyphonicPitchShifter.cpp
+)
+
+# Build as a bundle
+add_library(PolyphonicPitchShifter MODULE ${SOURCE_FILES})
+set_target_properties(PolyphonicPitchShifter PROPERTIES
+    BUNDLE TRUE
+    BUNDLE_EXTENSION "component"
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
+)
+
+# Link libraries
+target_link_libraries(PolyphonicPitchShifter
+    ${COREAUDIO_FRAMEWORK}
+    ${AUDIOUNIT_FRAMEWORK}
+    ${AUDIOTOOLBOX_FRAMEWORK}
+    ${RUBBERBAND_LIB}
+)
+```
+
+## Integrating with RubberBand Library
+
+The RubberBand library must be available on your system. If you're using an online IDE, you may need to install it through package management.
+
+## Optimization Tips for Real-Time Guitar Processing
+
+1. **Buffer Size**: Test with 128 and 256 sample buffer sizes for better real-time performance
+2. **Thread Priority**: Consider using higher thread priority for the audio thread
+3. **Memory Management**: Avoid allocations during processing (implemented in the code)
+4. **Processing Flags**: Use the RubberBand::RubberBandStretcher::OptionProcessRealTime flag
+5. **Low-Frequency Optimization**: Added specific processing optimizations for guitar low frequencies
+
+## Testing on Guitar with Drop F Tuning
+
+When testing with Drop F guitar:
+1. Use a clean direct signal without distortion for best tracking
+2. Start with "Low Latency" option for minimum delay
+3. Increase "Formant" parameter for more natural sound with large pitch shifts
+4. Set "Mix" to 100% initially and adjust to taste
