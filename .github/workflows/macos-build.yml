@@ -34,7 +34,7 @@ jobs:
         make
 
     - name: Upload component artifact
-      uses: actions/upload-artifact@v3.1.2
+      uses: actions/actions/upload-artifact@v3.1.2
       with:
         name: PolyphonicPitchShifter
         path: build/PolyphonicPitchShifter.component
