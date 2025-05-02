@@ -3,19 +3,22 @@ project(PolyphonicPitchShifter)
 
 set(CMAKE_CXX_STANDARD 14)
 
-# Check if we're on macOS
+include_directories("${CMAKE_SOURCE_DIR}/AudioUnitSDK/include/AudioUnitSDK")
+
+# Check for macOS
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")
 endif()
 
-# Find RubberBand library
+# Find RubberBand
 find_library(RUBBERBAND_LIB rubberband REQUIRED)
 include_directories(${RUBBERBAND_INCLUDE_DIR})
 
-# Include system headers
-include_directories(/usr/local/include)
+# Set the include directory for the AudioUnitSDK
+set(AUDIOUNIT_SDK_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/AudioUnitSDK/include")
+include_directories(${AUDIOUNIT_SDK_INCLUDE_DIR})
 
-# macOS specific frameworks
+# macOS frameworks
 if(APPLE)
     find_library(COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
     find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
@@ -29,7 +32,6 @@ set(SOURCE_FILES
     PolyphonicPitchShifterVersion.h
 )
 
-# For macOS, build as AU component
 if(APPLE)
     add_library(PolyphonicPitchShifter MODULE ${SOURCE_FILES})
     set_target_properties(PolyphonicPitchShifter PROPERTIES
@@ -38,7 +40,6 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist"
     )
 
-    # Link macOS frameworks
     target_link_libraries(PolyphonicPitchShifter
         ${COREAUDIO_FRAMEWORK}
         ${AUDIOUNIT_FRAMEWORK}
@@ -47,26 +48,19 @@ if(APPLE)
         ${RUBBERBAND_LIB}
     )
 else()
-    # For non-macOS, build a shared library (mostly for testing/development)
     add_library(PolyphonicPitchShifter SHARED ${SOURCE_FILES})
     target_link_libraries(PolyphonicPitchShifter ${RUBBERBAND_LIB})
 endif()
 
-# Add compiler optimizations for release builds
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
-# Include testing only in debug mode
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    # Add test executable if needed
     # add_executable(TestPitchShifter tests/TestPitchShifter.cpp)
     # target_link_libraries(TestPitchShifter PolyphonicPitchShifter)
 endif()
 
-# Installation rules
 if(APPLE)
-    install(TARGETS PolyphonicPitchShifter 
-            DESTINATION ~/Library/Audio/Plug-Ins/Components)
-else()
     install(TARGETS PolyphonicPitchShifter
-            DESTINATION ${CMAKE_INSTALL_PREFIX}/lib)
+            ... # Install details
+    )
 endif()

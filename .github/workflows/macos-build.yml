@@ -1,0 +1,40 @@
+name: macOS Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        brew update
+        brew install cmake rubberband
+
+    - name: Clone AudioUnitSDK
+      run: git clone https://github.com/apple/AudioUnitSDK.git
+
+    - name: Configure CMake
+      run: |
+        mkdir -p build
+        cd build
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+
+    - name: Build plugin
+      run: |
+        cd build
+        make
+
+    - name: Upload component artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: PolyphonicPitchShifter
+        path: build/PolyphonicPitchShifter.component
