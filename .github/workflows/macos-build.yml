@@ -2,47 +2,55 @@ name: macOS Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   build:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
       with:
-        submodules: 'true'  # Ensure submodules (if any) are checked out
+        submodules: true
 
-    - name: Set up Environment
+    - name: Install dependencies
       run: |
         brew update
-        brew install rubberband
-        # Optional: Install any other dependencies here
+        brew install cmake rubberband
 
-    - name: Show Directory Structure
-      run: ls -R # helpful for debugging
+    - name: Clone AudioUnitSDK
+      run: git clone https://github.com/apple/AudioUnitSDK.git
 
     - name: Configure CMake
       run: |
+        mkdir -p build
         cd build
-        cmake -DCMAKE_INCLUDE_PATH="${GITHUB_WORKSPACE}/AudioUnitSDK/include" ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INCLUDE_PATH="${GITHUB_WORKSPACE}/AudioUnitSDK/include" ..
 
     - name: Build
       run: |
         cd build
-        make
+        make -j$(sysctl -n hw.ncpu)
 
-    - name: Create Artifact Directory
-      run: mkdir -p ./build/Release
-
-    - name: Find AU Component
+    - name: Prepare AU Component for Signing
       run: |
-        find ./build -name "PolyphonicPitchShifter.component" -path "*Release*" -exec cp {} ./build/Release \;
+        mkdir -p build/Release
+        find build -name "PolyphonicPitchShifter.component" -exec cp -R {} build/Release/ \;
+
+    - name: Ad-hoc Code Sign AU Component
+      run: |
+        codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: AudioUnitComponent
-        path: ./build/Release/PolyphonicPitchShifter.component
+        path: build/Release/PolyphonicPitchShifter.component
+        if-no-files-found: error
