@@ -1,4 +1,4 @@
-name: macOS Build
+name: Build AudioUnit Plugin
 
 on:
   push:
@@ -8,61 +8,75 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-latest # Use a macOS runner as required for AudioUnits
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          # Ensure submodules are fetched if AudioUnitSDK is included as one
           submodules: 'true'
 
-      - name: Set up Environment
+      - name: Set up Environment and Install RubberBand (via Homebrew)
         run: |
+          # Update Homebrew and install RubberBand and its common dependencies
           brew update
-          brew install rubberband
+          brew install rubberband libsndfile libsamplerate
 
-      - name: Show Directory Structure
-        run: ls -R
-
-      - name: Remove existing AudioUnitSDK (if present)
-        run: rm -rf AudioUnitSDK
-
-      - name: Clone AudioUnitSDK
-        run: git clone https://github.com/apple/AudioUnitSDK.git
-
-      - name: Debug AudioUnitSDK Contents
-        run: ls -R AudioUnitSDK
-
-      - name: Configure CMake
+      - name: Show Directory Structure (for debugging)
         run: |
+          echo "Workspace directory structure:"
+          ls -R ${{ github.workspace }}
+
+      # Explicit steps to ensure AudioUnitSDK is cloned
+      - name: Remove existing AudioUnitSDK directory (if present)
+        run: rm -rf ${{ github.workspace }}/AudioUnitSDK
+
+      - name: Clone AudioUnitSDK from Apple's repository
+        run: git clone https://github.com/apple/AudioUnitSDK.git ${{ github.workspace }}/AudioUnitSDK
+
+      - name: Debug AudioUnitSDK Contents (for debugging)
+        run: |
+          echo "AudioUnitSDK directory structure:"
+          ls -R ${{ github.workspace }}/AudioUnitSDK
+
+      - name: Configure CMake (Manual Steps)
+        run: |
+          # Clean and create build directory
           rm -rf build
           mkdir build
           cd build
+          # Run CMake with explicit build type and include path for AudioUnitSDK
           cmake \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_FLAGS="-I${GITHUB_WORKSPACE}/AudioUnitSDK/include" \
+            -DCMAKE_CXX_FLAGS="-I${{ github.workspace }}/AudioUnitSDK/include" \
             ..
 
-      - name: Build
+      - name: Build Plugin (Manual Make Command)
         run: |
           cd build
+          # Use make with parallel jobs based on CPU cores
           make -j$(sysctl -n hw.ncpu)
 
+      # Steps for preparing and signing the artifact
       - name: Create Artifact Directory
         run: mkdir -p build/Release
 
-      - name: Find AU Component
+      - name: Find and Copy AU Component to Release Directory
         run: |
+          # Find the built .component file and copy it to the Release directory
           find build -name "PolyphonicPitchShifter.component" \
             -path "*Release*" -exec cp -R {} build/Release/ \;
 
       - name: Ad-hoc Code Sign AU Component
+        # Ad-hoc signing is required for the component to load on macOS
         run: |
           codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
 
-      - name: Upload Artifact
+      - name: Upload AudioUnit Component Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AudioUnitComponent
+          # Upload the signed component from the Release directory
           path: build/Release/PolyphonicPitchShifter.component
-          if-no-files-found: error
+          if-no-files-found: error # Fail the job if the artifact is not found
