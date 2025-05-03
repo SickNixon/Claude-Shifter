@@ -59,6 +59,10 @@ endif()
 
 if(APPLE)
     install(TARGETS PolyphonicPitchShifter
-            ... # Install details
+        DESTINATION "Library/Audio/Plug-Ins/Components"
+        BUNDLE DESTINATION "${CMAKE_INSTALL_PREFIX}/Library/Audio/Plug-Ins/Components"
+    )
+    install(FILES "${CMAKE_SOURCE_DIR}/Info.plist"
+        DESTINATION "Library/Audio/Plug-Ins/Components/PolyphonicPitchShifter.component"
     )
 endif()
