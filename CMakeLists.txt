@@ -3,8 +3,6 @@ project(PolyphonicPitchShifter)
 
 set(CMAKE_CXX_STANDARD 14)
 
-include_directories("${CMAKE_SOURCE_DIR}/AudioUnitSDK/include/AudioUnitSDK")
-
 # Check for macOS
 if(APPLE)
     set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64")

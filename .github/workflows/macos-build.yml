@@ -1,40 +1,57 @@
-name: macOS Build
+name: Universal macOS Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
-  build-macos:
+  build-universal:
     runs-on: macos-latest
-
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-    - name: Install dependencies
+    - name: Install universal dependencies
       run: |
         brew update
-        brew install cmake rubberband
+        brew install cmake
+        brew install rubberband --universal
 
     - name: Clone AudioUnitSDK
       run: git clone https://github.com/apple/AudioUnitSDK.git
 
-    - name: Configure CMake
+    - name: Configure CMake (Universal)
       run: |
         mkdir -p build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release ..
+        cmake -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 ..
 
-    - name: Build plugin
+    - name: Build universal binary
       run: |
         cd build
-        make
+        cmake --build . --config Release -- -j$(sysctl -n hw.ncpu)
 
-    - name: Upload component artifact
-      uses: actions/upload-artifact@v3
+    - name: Code signing (Ad-hoc)
+      run: |
+        codesign --force --deep -s - build/PolyphonicPitchShifter.component
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: PolyphonicPitchShifter
+        name: PolyphonicPitchShifter-Universal
         path: build/PolyphonicPitchShifter.component
+        if-no-files-found: error
