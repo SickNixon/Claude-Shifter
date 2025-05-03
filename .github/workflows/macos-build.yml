@@ -25,9 +25,6 @@ jobs:
         brew update
         brew install cmake rubberband
 
-    - name: Clone AudioUnitSDK
-      run: git clone https://github.com/apple/AudioUnitSDK.git
-
     - name: Configure CMake
       run: |
         mkdir -p build
