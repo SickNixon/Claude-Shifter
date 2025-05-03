@@ -27,10 +27,11 @@ include_directories(${AUDIOUNIT_SDK_INCLUDE_DIR})
 
 # macOS frameworks required for AudioUnits
 if(APPLE)
-    find_framework(CoreAudio REQUIRED)
-    find_framework(AudioUnit REQUIRED)
-    find_framework(AudioToolbox REQUIRED REQUIRED)
-    find_framework(CoreFoundation REQUIRED)
+    # Use find_library to find macOS frameworks for broader compatibility
+    find_library(COREAUDIO_FRAMEWORK CoreAudio REQUIRED)
+    find_library(AUDIOUNIT_FRAMEWORK AudioUnit REQUIRED)
+    find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
 endif()
 
 # Define the source files for the plugin
@@ -51,12 +52,12 @@ if(APPLE)
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/Info.plist" # Specify the Info.plist file
     )
 
-    # Link against required frameworks and the RubberBand library
+    # Link against required frameworks (using variables from find_library) and the RubberBand library
     target_link_libraries(PolyphonicPitchShifter
-        CoreAudio
-        AudioUnit
-        AudioToolbox
-        CoreFoundation
+        ${COREAUDIO_FRAMEWORK}
+        ${AUDIOUNIT_FRAMEWORK}
+        ${AUDIOTOOLBOX_FRAMEWORK}
+        ${COREFOUNDATION_FRAMEWORK}
         ${RUBBERBAND_LIB} # Link the found RubberBand library
     )
 else()
