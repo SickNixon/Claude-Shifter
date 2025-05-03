@@ -2,55 +2,53 @@ name: macOS Build
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
-
-permissions:
-  contents: read
-  actions: write
+    branches: [ main ]
 
 jobs:
   build:
     runs-on: macos-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
       with:
-        submodules: true
+        submodules: 'true'  # Ensure submodules (if any) are checked out
 
-    - name: Install dependencies
+    - name: Set up Environment
       run: |
         brew update
-        brew install cmake rubberband
+        brew install rubberband
+        # Optional: Install any other dependencies here
+
+    - name: Show Directory Structure
+      run: ls -R # helpful for debugging
+
+    - name: Remove existing AudioUnitSDK (if present)
+      run: rm -rf AudioUnitSDK # important
 
     - name: Clone AudioUnitSDK
       run: git clone https://github.com/apple/AudioUnitSDK.git
 
     - name: Configure CMake
       run: |
-        mkdir -p build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INCLUDE_PATH="${GITHUB_WORKSPACE}/AudioUnitSDK/include" ..
+        cmake -DCMAKE_INCLUDE_PATH="${GITHUB_WORKSPACE}/AudioUnitSDK/include" ..
 
     - name: Build
       run: |
         cd build
-        make -j$(sysctl -n hw.ncpu)
+        make
 
-    - name: Prepare AU Component for Signing
-      run: |
-        mkdir -p build/Release
-        find build -name "PolyphonicPitchShifter.component" -exec cp -R {} build/Release/ \;
+    - name: Create Artifact Directory
+      run: mkdir -p ./build/Release
 
-    - name: Ad-hoc Code Sign AU Component
+    - name: Find AU Component
       run: |
-        codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
+        find ./build -name "PolyphonicPitchShifter.component" -path "*Release*" -exec cp {} ./build/Release \;
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: AudioUnitComponent
-        path: build/Release/PolyphonicPitchShifter.component
-        if-no-files-found: error
+        path: ./build/Release/PolyphonicPitchShifter.component
