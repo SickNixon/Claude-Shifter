@@ -14,6 +14,11 @@ endif()
 # Find RubberBand library
 # This assumes RubberBand is installed in a standard location or findable via CMake
 find_library(RUBBERBAND_LIB rubberband REQUIRED)
+
+# Add the standard Homebrew include path to find RubberBand headers
+# Homebrew typically installs headers to /usr/local/include
+include_directories(/usr/local/include)
+
 # Include RubberBand headers
 # CMake should find include directories associated with the found library
 # find_package(RubberBand CONFIG REQUIRED) # Alternative if RubberBand provides a CMake config file
