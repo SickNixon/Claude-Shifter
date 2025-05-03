@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(PolyphonicPitchShifter)
 
-# Set the C++ standard to 17 to support modern features used in AudioUnitSDK
-set(CMAKE_CXX_STANDARD 17)
+# Set the C++ standard to 20 to support modern features used in AudioUnitSDK
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON) # Ensure the specified standard is used
 
 # Check for macOS
