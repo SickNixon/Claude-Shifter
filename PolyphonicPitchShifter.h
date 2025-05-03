@@ -1,4 +1,4 @@
-#include "AUEffectBase.h"
+#include "AudioUnitSDK/AUEffectBase.h
 #include <rubberband/RubberBandStretcher.h>
 #include <mutex>
 #include <vector>
