@@ -36,11 +36,12 @@ jobs:
       - name: Configure CMake
         run: |
           rm -rf build
-          mkdir -p build
+          mkdir build
           cd build
-          cmake -DCMAKE_BUILD_TYPE=Release \
-                -DCMAKE_INCLUDE_PATH="${GITHUB_WORKSPACE}/AudioUnitSDK/AudioUnitSDK/AUBase" \
-                ..
+          cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS="-I${GITHUB_WORKSPACE}/AudioUnitSDK/include" \
+            ..
 
       - name: Build
         run: |
@@ -53,8 +54,7 @@ jobs:
       - name: Find AU Component
         run: |
           find build -name "PolyphonicPitchShifter.component" \
-               -path "*Release*" \
-               -exec cp -R {} build/Release/ \;
+            -path "*Release*" -exec cp -R {} build/Release/ \;
 
       - name: Ad-hoc Code Sign AU Component
         run: |
