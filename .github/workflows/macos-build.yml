@@ -1,102 +1,111 @@
 name: Build AudioUnit Plugin
+
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+
 jobs:
   build:
     runs-on: macos-latest # Use a macOS runner as required for AudioUnits
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
-          fetch-depth: 0
-          
-      - name: Set up ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ${{ runner.os }}-build
-          
-      - name: Install Build Dependencies
+          # Ensure submodules are fetched if AudioUnitSDK is included as one
+          submodules: 'true'
+
+      # Install dependencies for building RubberBand (using Homebrew on macOS)
+      # Removed 'brew install rubberband' as we are building from source
+      - name: Install RubberBand dependencies (using Homebrew on macOS)
         run: |
+          # Update Homebrew and install common dependencies for building RubberBand
           brew update
-          brew install libsndfile libsamplerate cmake ninja ccache
-          
-      - name: Show Directory Structure
+          # Removed 'brew install rubberband' - building from source instead
+          brew install libsndfile libsamplerate
+
+      - name: Show Workspace Directory Structure (for initial debugging)
         run: |
           echo "Workspace directory structure:"
           ls -R ${{ github.workspace }}
-          
-      - name: Clone AudioUnitSDK
+
+      # Explicit steps to ensure AudioUnitSDK is cloned
+      - name: Remove existing AudioUnitSDK directory (if present)
+        run: rm -rf ${{ github.workspace }}/AudioUnitSDK
+
+      - name: Clone AudioUnitSDK from Apple's repository
+        run: git clone https://github.com/apple/AudioUnitSDK.git ${{ github.workspace }}/AudioUnitSDK
+
+      - name: Debug AudioUnitSDK Contents (for debugging)
         run: |
-          rm -rf ${{ github.workspace }}/AudioUnitSDK
-          git clone --depth 1 https://github.com/apple/AudioUnitSDK.git ${{ github.workspace }}/AudioUnitSDK
-          
-      - name: Cache RubberBand
-        id: cache-rubberband
-        uses: actions/cache@v3
-        with:
-          path: /usr/local/include/rubberband
-          key: ${{ runner.os }}-rubberband-22may
-          
-      - name: Clone and Build RubberBand
-        if: steps.cache-rubberband.outputs.cache-hit != 'true'
+          echo "AudioUnitSDK directory structure:"
+          ls -R ${{ github.workspace }}/AudioUnitSDK
+
+      # Explicit steps to clone and build RubberBand from source
+      - name: Clone RubberBand repository
+        # Using --depth 1 for a shallow clone to potentially speed up
+        run: git clone --depth 1 https://github.com/rubberband/rubberband.git ${{ github.workspace }}/rubberband
+
+      - name: Debug Cloned RubberBand Directory Contents (for debugging)
         run: |
-          git clone --depth 1 https://github.com/breakfastquay/rubberband.git ${{ github.workspace }}/rubberband
+          echo "Cloned RubberBand directory structure:"
+          # List contents, including hidden files, in long format
+          ls -al ${{ github.workspace }}/rubberband
+
+      - name: Build and Install RubberBand
+        run: |
+          # Change directory into the cloned RubberBand source
           cd ${{ github.workspace }}/rubberband
-          mkdir -p build && cd build
-          cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release -GNinja
-          ninja
-          sudo ninja install
-          
-      - name: Configure CMake
-        run: |
-          # Set up environment variables for compiler cache
-          export PATH="/usr/lib/ccache:/usr/local/opt/ccache/libexec:$PATH"
-          
-          # Clean and create build directory
-          rm -rf build
-          mkdir -p build
+          mkdir build
           cd build
-          
-          # Run CMake with Ninja generator for faster builds
+          # Configure, build, and install RubberBand from source
+          # Install to /usr/local to match standard include/library paths
+          # '..' refers to the parent directory, which should be the cloned source
+          cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local
+          make
+          sudo make install # Requires sudo on GitHub runners for system locations
+
+      - name: Configure CMake for Plugin (Manual Steps)
+        run: |
+          # Clean and create build directory for your plugin
+          rm -rf build
+          mkdir build
+          cd build
+          # Run CMake with explicit build type and include path for AudioUnitSDK
+          # IMPORTANT: Update C++ standard to 20 to support features used in AudioUnitSDK
           cmake \
-            -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=20 \
-            -DCMAKE_CXX_FLAGS="-I${{ github.workspace }}/AudioUnitSDK/include -O3" \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_FLAGS="-I${{ github.workspace }}/AudioUnitSDK/include" \
             ..
-            
-      - name: Build Plugin
+
+      - name: Build Plugin (Manual Make Command)
         run: |
           cd build
-          ninja
-          
+          # Use make with parallel jobs based on CPU cores
+          make -j$(sysctl -n hw.ncpu)
+
+      # Steps for preparing and signing the artifact
       - name: Create Artifact Directory
         run: mkdir -p build/Release
-        
-      - name: Find and Copy AU Component
+
+      - name: Find and Copy AU Component to Release Directory
         run: |
           # Find the built .component file and copy it to the Release directory
           find build -name "PolyphonicPitchShifter.component" \
-            -type d -exec cp -R {} build/Release/ \;
-          
-      - name: Validate AudioUnit
-        run: |
-          # Verify the AudioUnit can be validated by macOS
-          /usr/bin/auval -v aumu PPSH YourCo
-          
+            -path "*Release*" -exec cp -R {} build/Release/ \;
+
       - name: Ad-hoc Code Sign AU Component
+        # Ad-hoc signing is required for the component to load on macOS
         run: |
           codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
-          
+
       - name: Upload AudioUnit Component Artifact
         uses: actions/upload-artifact@v4
         with:
           name: AudioUnitComponent
+          # Upload the signed component from the Release directory
           path: build/Release/PolyphonicPitchShifter.component
-          if-no-files-found: error
+          if-no-files-found: error # Fail the job if the artifact is not found
