@@ -17,11 +17,11 @@ jobs:
           # Ensure submodules are fetched if AudioUnitSDK is included as one
           submodules: 'true'
 
-      - name: Set up Environment and Install RubberBand (via Homebrew)
+      - name: Install RubberBand dependencies (using Homebrew on macOS)
         run: |
-          # Update Homebrew and install RubberBand and its common dependencies
+          # Update Homebrew and install common dependencies for building RubberBand
           brew update
-          brew install rubberband libsndfile libsamplerate
+          brew install libsndfile libsamplerate
 
       - name: Show Directory Structure (for debugging)
         run: |
@@ -39,6 +39,21 @@ jobs:
         run: |
           echo "AudioUnitSDK directory structure:"
           ls -R ${{ github.workspace }}/AudioUnitSDK
+
+      # Explicit steps to clone and build RubberBand from source
+      - name: Clone RubberBand repository
+        run: git clone https://github.com/rubberband/rubberband.git ${{ github.workspace }}/rubberband
+
+      - name: Build and Install RubberBand
+        run: |
+          cd ${{ github.workspace }}/rubberband
+          mkdir build
+          cd build
+          # Configure, build, and install RubberBand from source
+          # Install to /usr/local to match standard include/library paths
+          cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local
+          make
+          sudo make install # Requires sudo on GitHub runners for system locations
 
       - name: Configure CMake (Manual Steps)
         run: |
