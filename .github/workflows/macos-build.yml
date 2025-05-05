@@ -22,7 +22,7 @@ jobs:
       - name: Install Build Dependencies
         run: |
           brew update
-          brew install libsndfile libsamplerate cmake ninja ccache
+          brew install libsndfile libsamplerate cmake ninja ccache meson pkg-config
           
       - name: Show Directory Structure
         run: |
@@ -46,10 +46,10 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/breakfastquay/rubberband.git ${{ github.workspace }}/rubberband
           cd ${{ github.workspace }}/rubberband
-          mkdir -p build && cd build
-          cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release -GNinja
-          ninja
-          sudo ninja install
+          # Using Meson which is the primary build system for RubberBand
+          meson setup build -Dfft=vdsp -Dresampler=builtin -Dcmdline=disabled -Dladspa=disabled -Dlv2=disabled -Dvamp=disabled
+          ninja -C build
+          sudo ninja -C build install
           
       - name: Configure CMake
         run: |
