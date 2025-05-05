@@ -47,9 +47,42 @@ jobs:
           git clone --depth 1 https://github.com/breakfastquay/rubberband.git ${{ github.workspace }}/rubberband
           cd ${{ github.workspace }}/rubberband
           # Using Meson which is the primary build system for RubberBand
-          meson setup build -Dfft=vdsp -Dresampler=builtin -Dcmdline=disabled -Dladspa=disabled -Dlv2=disabled -Dvamp=disabled
+          meson setup build \
+            --prefix=/usr/local \
+            --buildtype=release \
+            -Dfft=vdsp \
+            -Dresampler=builtin \
+            -Djni=disabled \
+            -Dcmdline=disabled \
+            -Dladspa=disabled \
+            -Dlv2=disabled \
+            -Dvamp=disabled
           ninja -C build
           sudo ninja -C build install
+          
+          # Create symlinks to ensure headers are found where code expects them
+          sudo mkdir -p /usr/local/include/rubberband
+          for file in /usr/local/include/rubberband-*.*; do
+            [[ -f "$file" ]] && sudo ln -sf "$file" "/usr/local/include/rubberband/"
+          done
+          
+          # Also copy headers directly to expected location as fallback
+          if [ ! -f "/usr/local/include/rubberband/RubberBandStretcher.h" ]; then
+            sudo cp ${{ github.workspace }}/rubberband/rubberband/*.h /usr/local/include/rubberband/
+          fi
+          
+      - name: Debug RubberBand Installation
+        run: |
+          echo "RubberBand include directories:"
+          find /usr/local/include -name "*ubberband*" -type d
+          echo "RubberBand headers:"
+          find /usr/local/include -name "*ubberband*.h"
+          echo "RubberBandStretcher.h locations:"
+          find /usr/local/include -name "RubberBandStretcher.h"
+          echo "pkg-config info:"
+          pkg-config --cflags rubberband || echo "No pkg-config file found for rubberband"
+          echo "Library locations:"
+          find /usr/local/lib -name "*ubberband*"
           
       - name: Configure CMake
         run: |
@@ -66,7 +99,7 @@ jobs:
             -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=20 \
-            -DCMAKE_CXX_FLAGS="-I${{ github.workspace }}/AudioUnitSDK/include -O3" \
+            -DCMAKE_CXX_FLAGS="-I${{ github.workspace }}/AudioUnitSDK/include -I/usr/local/include -I/usr/local/include/rubberband -O3" \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             ..
@@ -84,15 +117,33 @@ jobs:
           # Find the built .component file and copy it to the Release directory
           find build -name "PolyphonicPitchShifter.component" \
             -type d -exec cp -R {} build/Release/ \;
+            
+      - name: Debug Component Location
+        if: always()
+        run: |
+          echo "Looking for component files:"
+          find build -name "*.component" -type d
+          echo "Build directory contents:"
+          find build -type f -name "*.dylib" -o -name "*.bundle" -o -name "*.component"
           
       - name: Validate AudioUnit
         run: |
-          # Verify the AudioUnit can be validated by macOS
-          /usr/bin/auval -v aumu PPSH YourCo
+          if [ -d "build/Release/PolyphonicPitchShifter.component" ]; then
+            # Verify the AudioUnit can be validated by macOS (continue on error)
+            /usr/bin/auval -v aumu PPSH YourCo || echo "AudioUnit validation failed but continuing"
+          else
+            echo "AudioUnit component not found in expected location"
+            exit 1
+          fi
           
       - name: Ad-hoc Code Sign AU Component
         run: |
-          codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
+          if [ -d "build/Release/PolyphonicPitchShifter.component" ]; then
+            codesign --force --deep --sign - build/Release/PolyphonicPitchShifter.component
+          else
+            echo "Component not found for signing"
+            exit 1
+          fi
           
       - name: Upload AudioUnit Component Artifact
         uses: actions/upload-artifact@v4

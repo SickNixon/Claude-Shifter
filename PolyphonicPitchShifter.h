@@ -1,5 +1,13 @@
-#include "AudioUnitSDK/AUEffectBase.h" // Added missing closing quote
-#include <rubberband/RubberBandStretcher.h>
+#include "AudioUnitSDK/AUEffectBase.h"
+#if __has_include(<rubberband/RubberBandStretcher.h>)
+    #include <rubberband/RubberBandStretcher.h>
+#elif __has_include("rubberband/RubberBandStretcher.h")
+    #include "rubberband/RubberBandStretcher.h" 
+#elif __has_include("RubberBandStretcher.h")
+    #include "RubberBandStretcher.h"
+#else
+    #error "RubberBand headers not found. Check installation path."
+#endif
 #include <mutex>
 #include <vector>
 #include <memory>
