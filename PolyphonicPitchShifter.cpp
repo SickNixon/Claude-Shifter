@@ -1,8 +1,9 @@
 #include "PolyphonicPitchShifter.h"
-#include "AudioUnitSDK/AUPlugInDispatch.h"
+// #include "AudioUnitSDK/AUPlugInDispatch.h" // Removed this direct include
 #include <cmath>
 
 // Component registration
+// AUDIOCOMPONENT_ENTRY is defined in AUPlugInDispatch.h, which is included by AUEffectBase.h
 AUDIOCOMPONENT_ENTRY(ausdk::AUBaseFactory, PolyphonicPitchShifter)
 
 // Static creator function
@@ -11,19 +12,15 @@ OSStatus PolyphonicPitchShifter::CreateEffectInstance(AudioComponentInstance inI
 }
 
 // Constructor
-PolyphonicPitchShifter::PolyphonicPitchShifter(AudioComponentInstance component)
-    : ausdk::AUEffectBase(component),
+PolyphonicPitchShifter::PolyphonicPitchShifter(AudioComponentInstance inComponentInstance)
+    : ausdk::AUEffectBase(inComponentInstance),
       mPitchShift(kDefaultPitchShift),
       mMix(kDefaultMix),
       mFormant(kDefaultFormant),
-      mLatencyMode(kDefaultLatency),
-      mNeedsReset(true),
-      mIsInitialized(false),
-      mLatency(0.0),
-      mSampleRate(44100.0),
-      mMaxFramesToProcess(4096)
+      mLatency(kDefaultLatency),
+      mNeedReconfiguration(true)
 {
-    // Initialize parameters
+    // Set default parameter values
     SetParameter(kParam_PitchShift, kAudioUnitScope_Global, 0, kDefaultPitchShift, 0);
     SetParameter(kParam_Mix, kAudioUnitScope_Global, 0, kDefaultMix, 0);
     SetParameter(kParam_Formant, kAudioUnitScope_Global, 0, kDefaultFormant, 0);
@@ -36,44 +33,34 @@ OSStatus PolyphonicPitchShifter::Initialize() {
     if (result != noErr) {
         return result;
     }
-    
+
     // Get audio format info
     const AudioStreamBasicDescription& inputFormat = GetInput(0)->GetStreamFormat();
-    mMaxFramesToProcess = GetMaxFramesPerSlice();
-    mSampleRate = inputFormat.mSampleRate;
-    
-    // Initialize RubberBand
-    initializeRubberBand();
-    
-    // Allocate buffers
-    mInputBufferL.resize(mMaxFramesToProcess);
-    mInputBufferR.resize(mMaxFramesToProcess);
-    mOutputBufferL.resize(mMaxFramesToProcess);
-    mOutputBufferR.resize(mMaxFramesToProcess);
-    
-    // Setup buffer pointers
-    mInputBuffers.resize(2);
-    mOutputBuffers.resize(2);
-    mInputBuffers[0] = mInputBufferL.data();
-    mInputBuffers[1] = mInputBufferR.data();
-    mOutputBuffers[0] = mOutputBufferL.data();
-    mOutputBuffers[1] = mOutputBufferR.data();
-    
-    mIsInitialized = true;
+    UInt32 maxFrames = GetMaxFramesPerSlice();
+
+    // Create the RubberBand stretcher
+    mStretcher = std::make_unique<RubberBand::RubberBandStretcher>(
+        inputFormat.mSampleRate,
+        inputFormat.mChannelsPerFrame,
+        RubberBand::RubberBandStretcher::OptionProcessRealTime |
+        RubberBand::RubberBandStretcher::OptionPitchHighQuality
+    );
+
+    // Configure initial state
+    ReconfigureStretcher();
+    mStretcher->setMaxProcessSize(maxFrames);
+
     return noErr;
+}
+
+// Destructor
+PolyphonicPitchShifter::~PolyphonicPitchShifter() {
+    Cleanup();
 }
 
 // Cleanup resources
 void PolyphonicPitchShifter::Cleanup() {
-    // Clean up RubberBand and buffers
     mStretcher.reset();
-    mInputBufferL.clear();
-    mInputBufferR.clear();
-    mOutputBufferL.clear();
-    mOutputBufferR.clear();
-    mInputBuffers.clear();
-    mOutputBuffers.clear();
-    mIsInitialized = false;
 }
 
 // Reset the processor
@@ -82,69 +69,43 @@ OSStatus PolyphonicPitchShifter::Reset(AudioUnitScope inScope, AudioUnitElement 
     if (result != noErr) {
         return result;
     }
-    
+
     if (mStretcher) {
-        resetRubberBand();
+        mStretcher->reset();
     }
-    
+
     return noErr;
 }
 
-// Initialize RubberBand stretcher
-void PolyphonicPitchShifter::initializeRubberBand() {
-    const AudioStreamBasicDescription& inputFormat = GetInput(0)->GetStreamFormat();
-    int numChannels = inputFormat.mChannelsPerFrame;
-    
-    // Create RubberBand stretcher with realtime options
-    mStretcher = std::make_unique<RubberBand::RubberBandStretcher>(
-        inputFormat.mSampleRate,
-        numChannels,
-        RubberBand::RubberBandStretcher::OptionProcessRealTime |
-        RubberBand::RubberBandStretcher::OptionPitchHighQuality
-    );
-    
-    // Set initial parameters
-    updateRubberBandParameters();
-    mStretcher->setMaxProcessSize(mMaxFramesToProcess);
-}
-
-// Reset RubberBand stretcher
-void PolyphonicPitchShifter::resetRubberBand() {
-    std::lock_guard<std::mutex> lock(mProcessMutex);
-    if (mStretcher) {
-        mStretcher->reset();
-        mNeedsReset = false;
+// Update stretcher configuration based on parameters
+void PolyphonicPitchShifter::ReconfigureStretcher() {
+    if (!mStretcher) {
+        return;
     }
-}
 
-// Update RubberBand parameters from current settings
-void PolyphonicPitchShifter::updateRubberBandParameters() {
-    if (!mStretcher) return;
-    
-    std::lock_guard<std::mutex> lock(mProcessMutex);
-    
     // Set pitch shift
-    double pitchScale = pow(2.0, mPitchShift / 12.0);
-    mStretcher->setPitchScale(pitchScale);
-    
-    // Set transients mode - using OptionTransientsCrisp 
-    // (OptionTransientsPreserve doesn't exist in this version of RubberBand)
-    RubberBand::RubberBandStretcher::Options options = mStretcher->getOptions();
-    options = (options & ~RubberBand::RubberBandStretcher::OptionTransientsMask) | 
-              RubberBand::RubberBandStretcher::OptionTransientsCrisp;
-    
+    mStretcher->setPitchScale(pow(2.0, mPitchShift / 12.0));
+
+    // Set transients mode - using OptionTransientsCrisp instead of OptionTransientsPreserve
+    mStretcher->setTransientsOption(RubberBand::RubberBandStretcher::OptionTransientsCrisp);
+
     // Set formant preservation
+    RubberBand::RubberBandStretcher::Options options = mStretcher->getOptions();
     if (mFormant > 50.0f) {
         options |= RubberBand::RubberBandStretcher::OptionFormantPreserved;
     } else {
         options &= ~RubberBand::RubberBandStretcher::OptionFormantPreserved;
     }
-    
-    // Update options
     mStretcher->setOptions(options);
-    
-    // Calculate and set latency
-    mLatency = mLatencyMode * 0.05; // Simplified latency calculation
+
+    // Set latency mode
+    if (mLatency > 50.0f) {
+        mStretcher->setTimeRatio(1.0);
+    } else {
+        mStretcher->setTimeRatio(1.0);  // Same setting, but could be adjusted for different latency modes
+    }
+
+    mNeedReconfiguration = false;
 }
 
 // Process audio
@@ -154,199 +115,182 @@ OSStatus PolyphonicPitchShifter::ProcessBufferLists(
     AudioBufferList& outBuffer,
     UInt32 inFramesToProcess
 ) {
-    if (!mIsInitialized || !mStretcher) {
-        return kAudioUnitErr_Uninitialized;
+    // Check if we need to reconfigure the stretcher
+    if (mNeedReconfiguration) {
+        ReconfigureStretcher();
     }
-    
-    std::lock_guard<std::mutex> lock(mProcessMutex);
-    
-    // Check if we need to update parameters
-    if (mNeedsReset) {
-        resetRubberBand();
-        updateRubberBandParameters();
+
+    // Check for formant preservation changes
+    int currentOptions = mStretcher->getOptions();
+    bool formantPreserved = (currentOptions & RubberBand::RubberBandStretcher::OptionFormantPreserved) != 0;
+
+    if ((mFormant > 50.0f && !formantPreserved) ||
+        (mFormant <= 50.0f && formantPreserved)) {
+        ReconfigureStretcher();
     }
-    
+
     // Get channel counts
     const UInt32 numInputChannels = inBuffer.mNumberBuffers;
     const UInt32 numOutputChannels = outBuffer.mNumberBuffers;
-    const UInt32 numChannels = std::min(numInputChannels, numOutputChannels);
-    const UInt32 numChannelsToProcess = std::min(numChannels, 2u); // Max 2 channels for now
-    
-    // Copy input data to our processing buffers
-    for (UInt32 channel = 0; channel < numChannelsToProcess; ++channel) {
-        const float* inputData = static_cast<const float*>(inBuffer.mBuffers[channel].mData);
-        float* inputBuffer = (channel == 0) ? mInputBufferL.data() : mInputBufferR.data();
-        
-        // Copy input data
-        memcpy(inputBuffer, inputData, inFramesToProcess * sizeof(float));
+
+    // Process the input through RubberBand
+    for (UInt32 channel = 0; channel < numInputChannels; ++channel) {
+        float* inputData = static_cast<float*>(inBuffer.mBuffers[channel].mData);
+        mStretcher->process(&inputData, inFramesToProcess, false);
     }
-    
-    // Process with RubberBand
-    mStretcher->process(mInputBuffers.data(), inFramesToProcess, false);
-    
-    // Get available output
+
+    // Retrieve available output
     const UInt32 available = mStretcher->available();
     if (available > 0) {
+        // Create temporary output buffers for RubberBand
+        std::vector<float*> outputPtrs(numOutputChannels);
+        for (UInt32 channel = 0; channel < numOutputChannels; ++channel) {
+            outputPtrs[channel] = static_cast<float*>(outBuffer.mBuffers[channel].mData);
+        }
+
         // Retrieve output from RubberBand
-        mStretcher->retrieve(mOutputBuffers.data(), available);
-        
-        // Copy output and apply mix
-        for (UInt32 channel = 0; channel < numChannelsToProcess; ++channel) {
-            const float* inputData = static_cast<const float*>(inBuffer.mBuffers[channel].mData);
-            float* outputData = static_cast<float*>(outBuffer.mBuffers[channel].mData);
-            const float* processedData = (channel == 0) ? mOutputBufferL.data() : mOutputBufferR.data();
-            
+        mStretcher->retrieve(outputPtrs.data(), available);
+
+        // Apply wet/dry mix if not 100% wet
+        if (mMix < 100.0f) {
             const float wet = mMix / 100.0f;
             const float dry = 1.0f - wet;
-            
-            // Apply wet/dry mix
-            for (UInt32 frame = 0; frame < available && frame < inFramesToProcess; ++frame) {
-                outputData[frame] = wet * processedData[frame] + dry * inputData[frame];
-            }
-            
-            // Fill any remaining frames with input
-            for (UInt32 frame = available; frame < inFramesToProcess; ++frame) {
-                outputData[frame] = inputData[frame];
-            }
-        }
-        
-        // Copy processed output to any remaining channels
-        for (UInt32 channel = numChannelsToProcess; channel < numOutputChannels; ++channel) {
-            if (channel < numInputChannels) {
-                // Copy from input
-                const float* inputData = static_cast<const float*>(inBuffer.mBuffers[channel].mData);
+
+            for (UInt32 channel = 0; channel < numInputChannels && channel < numOutputChannels; ++channel) {
+                float* inputData = static_cast<float*>(inBuffer.mBuffers[channel].mData);
                 float* outputData = static_cast<float*>(outBuffer.mBuffers[channel].mData);
-                memcpy(outputData, inputData, inFramesToProcess * sizeof(float));
-            } else {
-                // Silence
-                float* outputData = static_cast<float*>(outBuffer.mBuffers[channel].mData);
-                memset(outputData, 0, inFramesToProcess * sizeof(float));
+
+                for (UInt32 frame = 0; frame < inFramesToProcess && frame < available; ++frame) {
+                    outputData[frame] = wet * outputData[frame] + dry * inputData[frame];
+                }
             }
         }
     } else {
-        // No output available, pass through input
-        for (UInt32 channel = 0; channel < numOutputChannels; ++channel) {
+        // No output available yet, pass through the input
+        for (UInt32 channel = 0; channel < numInputChannels && channel < numOutputChannels; ++channel) {
+            float* inputData = static_cast<float*>(inBuffer.mBuffers[channel].mData);
             float* outputData = static_cast<float*>(outBuffer.mBuffers[channel].mData);
-            
-            if (channel < numInputChannels) {
-                const float* inputData = static_cast<const float*>(inBuffer.mBuffers[channel].mData);
-                memcpy(outputData, inputData, inFramesToProcess * sizeof(float));
-            } else {
-                memset(outputData, 0, inFramesToProcess * sizeof(float));
-            }
+
+            memcpy(outputData, inputData, inFramesToProcess * sizeof(float));
         }
     }
-    
+
     return noErr;
 }
 
-// Get property info
-OSStatus PolyphonicPitchShifter::GetPropertyInfo(AudioUnitPropertyID inID,
-                                               AudioUnitScope inScope,
-                                               AudioUnitElement inElement,
-                                               UInt32& outDataSize,
-                                               bool& outWritable) {
-    return ausdk::AUEffectBase::GetPropertyInfo(inID, inScope, inElement, outDataSize, outWritable);
-}
-
-// Get property
-OSStatus PolyphonicPitchShifter::GetProperty(AudioUnitPropertyID inID,
-                                           AudioUnitScope inScope,
-                                           AudioUnitElement inElement,
-                                           void* outData) {
-    return ausdk::AUEffectBase::GetProperty(inID, inScope, inElement, outData);
+// Get parameter value strings
+OSStatus PolyphonicPitchShifter::GetParameterValueStrings(AudioUnitScope inScope,
+                                                        AudioUnitParameterID inParameterID,
+                                                        CFArrayRef* outStrings) {
+    // We don't use parameter strings
+    return kAudioUnitErr_InvalidProperty;
 }
 
 // Get parameter info
 OSStatus PolyphonicPitchShifter::GetParameterInfo(AudioUnitScope inScope,
-                                                AudioUnitParameterID inID,
+                                                AudioUnitParameterID inParameterID,
                                                 AudioUnitParameterInfo& outParameterInfo) {
     // Make sure scope is global
     if (inScope != kAudioUnitScope_Global) {
         return kAudioUnitErr_InvalidScope;
     }
-    
+
     // Initialize the parameter info struct
     AudioUnitParameterInfo& info = outParameterInfo;
     info.flags = kAudioUnitParameterFlag_IsWritable | kAudioUnitParameterFlag_IsReadable;
-    
-    switch (inID) {
+
+    switch (inParameterID) {
         case kParam_PitchShift:
             info.name = CFSTR("Pitch Shift");
             info.unitName = CFSTR("semitones");
-            info.minValue = kMinPitchShift;
-            info.maxValue = kMaxPitchShift;
+            info.minValue = -24.0f;
+            info.maxValue = 24.0f;
             info.defaultValue = kDefaultPitchShift;
             info.unit = kAudioUnitParameterUnit_RelativeSemiTones;
             break;
-            
+
         case kParam_Mix:
             info.name = CFSTR("Mix");
             info.unitName = CFSTR("%");
-            info.minValue = kMinMix;
-            info.maxValue = kMaxMix;
+            info.minValue = 0.0f;
+            info.maxValue = 100.0f;
             info.defaultValue = kDefaultMix;
             info.unit = kAudioUnitParameterUnit_Percent;
             break;
-            
+
         case kParam_Formant:
             info.name = CFSTR("Formant Preservation");
             info.unitName = CFSTR("%");
-            info.minValue = kMinFormant;
-            info.maxValue = kMaxFormant;
+            info.minValue = 0.0f;
+            info.maxValue = 100.0f;
             info.defaultValue = kDefaultFormant;
             info.unit = kAudioUnitParameterUnit_Percent;
             break;
-            
+
         case kParam_Latency:
             info.name = CFSTR("Low Latency Mode");
-            info.unitName = CFSTR("");
-            info.minValue = kMinLatency;
-            info.maxValue = kMaxLatency;
+            info.unitName = CFSTR("%");
+            info.minValue = 0.0f;
+            info.maxValue = 100.0f;
             info.defaultValue = kDefaultLatency;
-            info.unit = kAudioUnitParameterUnit_Boolean;
+            info.unit = kAudioUnitParameterUnit_Percent;
             break;
-            
+
         default:
             return kAudioUnitErr_InvalidParameter;
     }
-    
+
     return noErr;
+}
+
+// Get property info
+OSStatus PolyphonicPitchShifter::GetPropertyInfo(AudioUnitPropertyID inID,
+                                              AudioUnitScope inScope,
+                                              AudioUnitElement inElement,
+                                              UInt32& outDataSize,
+                                              bool& outWritable) {
+    return ausdk::AUEffectBase::GetPropertyInfo(inID, inScope, inElement, outDataSize, outWritable);
+}
+
+// Get property
+OSStatus PolyphonicPitchShifter::GetProperty(AudioUnitPropertyID inID,
+                                          AudioUnitScope inScope,
+                                          AudioUnitElement inElement,
+                                          void* outData) {
+    return ausdk::AUEffectBase::GetProperty(inID, inScope, inElement, outData);
 }
 
 // Set parameter
 OSStatus PolyphonicPitchShifter::SetParameter(AudioUnitParameterID inID,
-                                            AudioUnitScope inScope,
-                                            AudioUnitElement inElement,
-                                            AudioUnitParameterValue inValue,
-                                            UInt32 inBufferOffsetInFrames) {
+                                           AudioUnitScope inScope,
+                                           AudioUnitElement inElement,
+                                           AudioUnitParameterValue inValue,
+                                           UInt32 inBufferOffsetInFrames) {
     // Update our parameter values and flag for reconfiguration
-    if (inScope == kAudioUnitScope_Global) {
-        switch (inID) {
-            case kParam_PitchShift:
-                mPitchShift = inValue;
-                mNeedsReset = true;
-                break;
-                
-            case kParam_Mix:
-                mMix = inValue;
-                break;
-                
-            case kParam_Formant:
-                mFormant = inValue;
-                mNeedsReset = true;
-                break;
-                
-            case kParam_Latency:
-                mLatencyMode = inValue;
-                mNeedsReset = true;
-                break;
-                
-            default:
-                return kAudioUnitErr_InvalidParameter;
-        }
+    switch (inID) {
+        case kParam_PitchShift:
+            mPitchShift = inValue;
+            mNeedReconfiguration = true;
+            break;
+
+        case kParam_Mix:
+            mMix = inValue;
+            break;
+
+        case kParam_Formant:
+            mFormant = inValue;
+            mNeedReconfiguration = true;
+            break;
+
+        case kParam_Latency:
+            mLatency = inValue;
+            mNeedReconfiguration = true;
+            break;
+
+        default:
+            return kAudioUnitErr_InvalidParameter;
     }
-    
+
     // Call the base class implementation
     return ausdk::AUEffectBase::SetParameter(inID, inScope, inElement, inValue, inBufferOffsetInFrames);
 }
